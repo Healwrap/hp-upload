@@ -1,19 +1,22 @@
-const express = require('express');
-const path = require('path');
+/**
+ * TODO
+ * @author pepedd864
+ * @date 2024/7/22
+ */
+const express = require("express");
+const path = require("path");
 const app = express();
-const cors = require('cors');
-const port = require('./config').port;
+const cors = require("cors");
+const config = require("./config");
+// const port = require("./config").port;
+
 app.use(cors());
-app.use('/upload', express.static(path.join(__dirname, './file')));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.get('/download/:filename', (req, res) => {
-  const filename = path.join(__dirname, './res', req.params.filename);
-  res.download(filename, req.params.filename);
-});
 
-app.use('/api/upload', require('./uploader'));
+app.use("/upload", express.static(path.join(__dirname, "./file")));
+app.use("/api/upload", require("./router/uploader"));
 
-app.listen(port, () => {
-  console.log(`server listen on ${port}`);
+app.listen(config.port, () => {
+  console.log(`server listen on ${config.port}`);
 });
