@@ -1,72 +1,232 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
-</head>
-<body>
-<span class="status">状态：
-    <span class="inner"></span>
-</span><br>
-<input type="file"/>
-<button class="upload-btn">上传文件</button>
-<button class="pause-btn">暂停上传</button>
-<script type="module">
-  import BreakpointUpload from "../build/index.js";
-
-  const status = document.querySelector('.status .inner')
-  const fileInput = document.querySelector('input[type="file"]')
-  const uploadBtn = document.querySelector('button.upload-btn')
-  const pauseBtn = document.querySelector('button.pause-btn')
-  let breakpointUpload
-  let piecesUpload
-  let cutFileInfo
-  fileInput.onchange = function (e) {
-    status.innerHTML = '已选择文件'
-    const file = e.target.files[0]
-    breakpointUpload = new BreakpointUpload(file)
-    breakpointUpload.spilt().then((res) => {
-      cutFileInfo = res
-      status.innerHTML = `文件已处理, 耗时${res.time}ms`
-    })
-  }
-  uploadBtn.onclick = async function () {
-    if (!cutFileInfo) {
-      alert('请先选择文件或等待文件处理')
-      return
-    }
-    status.innerHTML = '开始检查文件进度'
-    const resp = await breakpointUpload.handShake(cutFileInfo)
-    if (typeof resp.data === 'string') {
-      status.innerHTML = `文件已上传, 链接：${resp.data}`
-      return
-    }
-    // await 可以将异步的代码当作同步代码来执行, 所以这里实现了sleep的效果
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    const progress = 1 - (resp.data.length / cutFileInfo.chunks.length)
-    status.innerHTML = `${progress === 0 ? '文件未上传' : `已上传${(progress * 100).toFixed(2)}%`}`
-    piecesUpload = breakpointUpload.upload(
-      resp.data,
-      cutFileInfo,
-      (progress) => {
-        status.innerHTML = `上传进度：${progress.toFixed(2)}%`
-      }, () => {
-        status.innerHTML = '上传文件成功'
+  <meta charset="UTF-8">
+  <title>云盘演示页面</title>
+  <style>
+      .container {
+          height: 100vh;
+          display: flex;
+          justify-content: space-between;
       }
-    )
-    piecesUpload.start()
+
+      a {
+          text-decoration: none;
+      }
+
+      .title {
+          font-size: 20px;
+          margin-bottom: 10px;
+          font-weight: bold;
+          text-align: center;
+      }
+
+      .upload-panel {
+          display: flex;
+          flex-direction: column;
+          width: 40%;
+      }
+
+      .upload-panel .inner {
+          flex: 1;
+          width: 100%;
+          border: 1px #000 solid;
+      }
+
+      .drive-files {
+          display: flex;
+          flex-direction: column;
+          width: 59%;
+      }
+
+      .drive-files .inner {
+          flex: 1;
+          width: 100%;
+          border: 1px #000 solid;
+          padding: 8px 0;
+      }
+
+      .drive-files .inner .drive-files-item {
+          display: flex;
+          justify-content: space-between;
+          margin: 2px 10px;
+          padding: 4px;
+          background: #6c6c6c;
+          cursor: pointer;
+      }
+
+      .drive-files .inner .drive-files-item:hover {
+          background: #8c8c8c;
+      }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+  <div class="upload-panel">
+    <div class="title">上传板块</div>
+    <div class="inner">
+      <div class="tools">
+        <button class="select-files">选择文件或文件夹</button>
+        <button class="all-start">全部开始</button>
+        <button class="all-pause">全部暂停</button>
+        <button class="all-delete">全部删除</button>
+      </div>
+      <div class="upload-task">
+        啥也没有，试着上传些文件吧！
+      </div>
+    </div>
+  </div>
+  <div class="drive-files">
+    <div class="title" style="display: flex">云盘文件:
+      <div class="current-path"></div>
+    </div>
+    <div class="inner">
+      <div class="drive-files-item">..\</div>
+      <div class="list">
+        啥也没有，试着上传些文件吧！
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module">
+  const urlParams = new URLSearchParams(window.location.search);
+  const currentPath = urlParams.get("path") || "\\";
+  let uploadTasks = [];
+  const currentPathEl = document.querySelector(".drive-files .current-path");
+  currentPathEl.innerHTML = currentPath;
+  const driveFiles = await fetch(`http://localhost:8000/api/list?path=${currentPath}`).then(res => res.json());
+
+  const selectFilesBtn = document.querySelector("button.select-files");
+  const driveFilesInner = document.querySelector(".drive-files .inner .list");
+  const uploadTaskList = document.querySelector(".upload-panel .inner .upload-task");
+
+
+  selectFilesBtn.addEventListener("click", async () => {
+    // 处理句柄
+    async function _processHandle(dir, handle) {
+      if (handle.kind === "file") {
+        // 不是文件夹
+        return uploadTasks.push({
+          name: handle.name,
+          path: `${dir}\\${handle.name}`,
+          file: await handle.getFile()
+        });
+      }
+      handle.children = [];
+      const iter = await handle.entries();
+      // iter 异步迭代器
+      for await (const info of iter) {
+        await _processHandle(`${dir}\\${handle.name}`, info[1]); // 递归处理
+      }
+    }
+
+    const handle = await showDirectoryPicker();
+    // 处理句柄
+    await _processHandle(currentPath, handle);
+    console.log(uploadTasks);
+  });
+
+
+  /**
+   * 返回上一级目录
+   */
+  document.querySelector(".drive-files>.inner>.drive-files-item").addEventListener("click", function goUpperDir() {
+    let currentUrl = new URL(window.location.href);
+    const pathArray = currentUrl.searchParams.get("path").split("\\");
+    pathArray.pop();
+    let newPath = pathArray.join("\\");
+    currentUrl.searchParams.set("path", newPath);
+    window.location.href = currentUrl.href;
+  });
+
+  /**
+   * 根据数据的树形结构生成文件树
+   */
+  function renderFileTree() {
+    let innerContent = "";
+    for (let item of driveFiles.children) {
+      if (item.type === "file") {
+        innerContent += `<div class="drive-files-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件</div></div>`;
+      }
+      if (item.type === "dir") {
+        innerContent += `<a href="?path=${item.path}"><div class="drive-files-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件夹</div></div></a>`;
+      }
+    }
+
+    driveFilesInner.innerHTML = innerContent;
   }
 
-  pauseBtn.onclick = function () {
-    if (!piecesUpload.getState()) {
-      piecesUpload.pause()
-      pauseBtn.innerHTML = '继续上传'
-    } else {
-      piecesUpload.start()
-      pauseBtn.innerHTML = '暂停上传'
-    }
-  }
+  renderFileTree();
+
 
 </script>
 </body>
+
+<!--<body>-->
+<!--<span class="status">状态：-->
+<!--    <span class="inner"></span>-->
+<!--</span><br>-->
+<!--<input type="file"/>-->
+<!--<button class="upload-btn">上传文件</button>-->
+<!--<button class="pause-btn">暂停上传</button>-->
+<!--<script type="module">-->
+<!--  import BreakpointUpload from "../build/index.js";-->
+
+<!--  const status = document.querySelector('.status .inner')-->
+<!--  const fileInput = document.querySelector('input[type="file"]')-->
+<!--  const uploadBtn = document.querySelector('button.upload-btn')-->
+<!--  const pauseBtn = document.querySelector('button.pause-btn')-->
+<!--  let breakpointUpload-->
+<!--  let piecesUpload-->
+<!--  let cutFileInfo-->
+<!--  fileInput.onchange = function (e) {-->
+<!--    status.innerHTML = '已选择文件'-->
+<!--    const file = e.target.files[0]-->
+<!--    breakpointUpload = new BreakpointUpload(file)-->
+<!--    breakpointUpload.spilt().then((res) => {-->
+<!--      cutFileInfo = res-->
+<!--      status.innerHTML = `文件已处理, 耗时${res.time}ms`-->
+<!--    })-->
+<!--  }-->
+<!--  uploadBtn.onclick = async function () {-->
+<!--    if (!cutFileInfo) {-->
+<!--      alert('请先选择文件或等待文件处理')-->
+<!--      return-->
+<!--    }-->
+<!--    status.innerHTML = '开始检查文件进度'-->
+<!--    const resp = await breakpointUpload.handShake(cutFileInfo)-->
+<!--    if (typeof resp.data === 'string') {-->
+<!--      status.innerHTML = `文件已上传, 链接：${resp.data}`-->
+<!--      return-->
+<!--    }-->
+<!--    // await 可以将异步的代码当作同步代码来执行, 所以这里实现了sleep的效果-->
+<!--    await new Promise(resolve => setTimeout(resolve, 1000))-->
+<!--    const progress = 1 - (resp.data.length / cutFileInfo.chunks.length)-->
+<!--    status.innerHTML = `${progress === 0 ? '文件未上传' : `已上传${(progress * 100).toFixed(2)}%`}`-->
+<!--    piecesUpload = breakpointUpload.upload(-->
+<!--      resp.data,-->
+<!--      cutFileInfo,-->
+<!--      (progress) => {-->
+<!--        status.innerHTML = `上传进度：${progress.toFixed(2)}%`-->
+<!--      }, () => {-->
+<!--        status.innerHTML = '上传文件成功'-->
+<!--      }-->
+<!--    )-->
+<!--    piecesUpload.start()-->
+<!--  }-->
+
+<!--  pauseBtn.onclick = function () {-->
+<!--    if (!piecesUpload.getState()) {-->
+<!--      piecesUpload.pause()-->
+<!--      pauseBtn.innerHTML = '继续上传'-->
+<!--    } else {-->
+<!--      piecesUpload.start()-->
+<!--      pauseBtn.innerHTML = '暂停上传'-->
+<!--    }-->
+<!--  }-->
+
+<!--</script>-->
+<!--</body>-->
 </html>

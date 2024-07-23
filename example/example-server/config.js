@@ -4,5 +4,5 @@
  * @date 2024/7/22
  */
 module.exports = {
-  port: 8000
+  port: 8000,
 };
