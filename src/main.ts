@@ -1,133 +1,106 @@
 import SparkMD5 from 'spark-md5'
 
-/**
- * 构建一个分片上传类
- */
-export default class BreakpointUpload {
-  #file
-
-  constructor(file) {
-    this.#file = file
-  }
-
-  /**
-   * 对文件进行分片操作
-   * @returns {Promise<{fileId: string, ext: string, chunks: Blob[], time: number}>}
-   */
-  spilt() {
-    return this.#spiltFile(this.#file)
-  }
-
-  /**
-   * 上传文件 返回一个上传文件对象 可以控制暂停和开始
-   * @param needs
-   * @param fileInfo
-   * @param updateFn
-   * @param callback
-   * @returns {Pieces}
-   */
-  upload(needs, fileInfo, updateFn, callback) {
-    const pieces = new Pieces(needs, fileInfo)
-    pieces.start(updateFn, callback)
-    return pieces
-  }
-
-  /**
-   * 与后端握手，获取文件上传进度
-   * @param fileInfo
-   * @returns {Promise<any>}
-   */
-  handShake(fileInfo) {
-    return fetch('http://localhost:8000/api/upload/handshake', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fileId: fileInfo.fileId,
-        ext: fileInfo.ext,
-        chunkIds: fileInfo.chunks.map((it) => it.id),
-      }),
-    }).then((resp) => resp.json())
-  }
-
-  /**
-   * 对文件进行分片操作
-   * @param file
-   * @returns {Promise<{fileId: string,ext: string,chunks:Blob[],time:number}>}
-   */
-  #spiltFile(file) {
-    return new Promise((resolve) => {
-      /**
-       * 读取下一个分片
-       */
-      function _loadNext() {
-        const start = chunkIndex * chunkSize,
-          end = start + chunkSize >= file.size ? file.size : start + chunkSize
-        fileReader.readAsArrayBuffer(file.slice(start, end))
+export async function createUploadTasks(handles) {
+  let uploadTask = []
+  for (let handle of handles) {
+    // 判断文件大小是否大于200M，大于使用分片上传
+    const file = handle.getFile()
+    if (file.size > 1024 * 1024 * 200) {
+      // 大于200M 使用分片上传
+      const splitInfo = await spiltFile(file)
+      const task = new MultipartTask({ ...splitInfo, path: handle.path, name: handle.name })
+      uploadTask.push(task)
+    } else {
+      // 小于200M 使用单文件上传
+      const file = handle.file
+      const fileInfo = {
+        fileId: SparkMD5.ArrayBuffer.hash(file),
+        ext: getExtName(file.name),
+        path: handle.path,
+        name: handle.name,
+        file: handle.getFile(),
       }
-
-      /**
-       * 获取文件的后缀名
-       * @param filename
-       */
-      function _extName(filename) {
-        const i = filename.lastIndexOf('.')
-        if (i < 0) {
-          return ''
-        }
-        return filename.substr(i)
-      }
-
-      const currentTime = new Date().getTime()
-      // 分片尺寸（2M）
-      const chunkSize = 1024 * 1024 * 2
-      // 分片数量
-      const chunkCount = Math.ceil(file.size / chunkSize)
-      // 当前chunk的下标
-      let chunkIndex = 0
-      // 使用ArrayBuffer完成文件MD5编码
-      const spark = new SparkMD5.ArrayBuffer()
-      const fileReader = new FileReader() // 文件读取器
-      const chunks = [] // 分片信息数组
-      // 读取第一个分片
-      _loadNext()
-      // 读取一个分片后的回调
-      fileReader.onload = function (e) {
-        spark.append(e.target.result) // 分片数据追加到MD5编码器中
-        // 当前分片单独的MD5
-        const chunkMD5 = SparkMD5.ArrayBuffer.hash(e.target.result) + chunkIndex
-        chunkIndex++
-        chunks.push({
-          id: chunkMD5,
-          content: new Blob([e.target.result]),
-        })
-        if (chunkIndex < chunkCount) {
-          _loadNext() // 继续读取下一个分片
-        } else {
-          // 读取完成
-          const fileId = spark.end()
-          const endTime = new Date().getTime()
-          resolve({
-            fileId,
-            ext: _extName(file.name),
-            chunks,
-            time: endTime - currentTime,
-          })
-        }
-      }
-    })
+      const task = new SingleTask(fileInfo)
+      uploadTask.push(task)
+    }
   }
 }
 
-class Pieces {
+/**
+ * 获取文件的后缀名
+ * @param filename
+ */
+function getExtName(filename) {
+  const i = filename.lastIndexOf('.')
+  if (i < 0) {
+    return ''
+  }
+  return filename.substr(i)
+}
+
+/**
+ * 对文件进行分片操作
+ * @param file
+ * @returns {Promise<{fileId: string,ext: string,chunks:Blob[],time:number}>}
+ */
+function spiltFile(file) {
+  return new Promise<{ fileId: string; ext: string; chunks: Blob[]; time: number }>((resolve) => {
+    /**
+     * 读取下一个分片
+     */
+    function _loadNext() {
+      const start = chunkIndex * chunkSize,
+        end = start + chunkSize >= file.size ? file.size : start + chunkSize
+      fileReader.readAsArrayBuffer(file.slice(start, end))
+    }
+
+    const currentTime = new Date().getTime()
+    // 分片尺寸（2M）
+    const chunkSize = 1024 * 1024 * 2
+    // 分片数量
+    const chunkCount = Math.ceil(file.size / chunkSize)
+    // 当前chunk的下标
+    let chunkIndex = 0
+    // 使用ArrayBuffer完成文件MD5编码
+    const spark = new SparkMD5.ArrayBuffer()
+    const fileReader = new FileReader() // 文件读取器
+    const chunks = [] // 分片信息数组
+    // 读取第一个分片
+    _loadNext()
+    // 读取一个分片后的回调
+    fileReader.onload = function (e) {
+      spark.append(e.target.result as ArrayBuffer) // 分片数据追加到MD5编码器中
+      // 当前分片单独的MD5
+      const chunkMD5 = SparkMD5.ArrayBuffer.hash(e.target.result as ArrayBuffer) + chunkIndex
+      chunkIndex++
+      chunks.push({
+        id: chunkMD5,
+        content: new Blob([e.target.result]),
+      })
+      if (chunkIndex < chunkCount) {
+        _loadNext() // 继续读取下一个分片
+      } else {
+        // 读取完成
+        const fileId = spark.end()
+        const endTime = new Date().getTime()
+        resolve({
+          fileId,
+          ext: getExtName(file.name),
+          chunks,
+          time: endTime - currentTime,
+        })
+      }
+    }
+  })
+}
+
+class MultipartTask {
   #paused
   #needs
   #fileInfo
 
-  constructor(needs, fileInfo) {
-    this.#paused = false
-    this.#needs = needs
+  constructor(fileInfo) {
+    this.#paused = true
     this.#fileInfo = fileInfo
   }
 
@@ -154,6 +127,25 @@ class Pieces {
    */
   getState() {
     return this.#paused
+  }
+
+  /**
+   * 与后端握手，获取文件上传进度
+   * @param fileInfo
+   * @returns {Promise<any>}
+   */
+  handShake(fileInfo) {
+    return fetch('http://localhost:8000/api/upload/handshake', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileId: fileInfo.fileId,
+        ext: fileInfo.ext,
+        chunkIds: fileInfo.chunks.map((it) => it.id),
+      }),
+    }).then((resp) => resp.json())
   }
 
   /**
@@ -197,5 +189,21 @@ class Pieces {
     const progress = (1 - needs.length / fileInfo.chunks.length) * 100
     updateFn(progress)
     await this.#upload(fileInfo, needs, updateFn, callback)
+  }
+}
+
+class SingleTask {
+  #fileInfo;
+
+  constructor(fileInfo) {
+    this.#fileInfo = fileInfo;
+  }
+
+  handShake() {
+
+  }
+
+  async upload() {
+
   }
 }

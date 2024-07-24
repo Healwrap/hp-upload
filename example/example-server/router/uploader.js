@@ -9,7 +9,7 @@ router.post("/multipart", async (req, res) => {
 
 });
 
-router.post("/handshake", async (req, res) => {
+router.get("/multipart", async (req, res) => {
   console.log(req.body);
 
 });

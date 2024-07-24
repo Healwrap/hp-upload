@@ -5,7 +5,6 @@
   <title>云盘演示页面</title>
   <style>
       .container {
-          height: 100vh;
           display: flex;
           justify-content: space-between;
       }
@@ -27,6 +26,7 @@
           width: 40%;
       }
 
+
       .upload-panel .inner {
           flex: 1;
           width: 100%;
@@ -46,7 +46,7 @@
           padding: 8px 0;
       }
 
-      .drive-files .inner .drive-files-item {
+      .list-item {
           display: flex;
           justify-content: space-between;
           margin: 2px 10px;
@@ -55,7 +55,7 @@
           cursor: pointer;
       }
 
-      .drive-files .inner .drive-files-item:hover {
+      .list-item:hover {
           background: #8c8c8c;
       }
   </style>
@@ -68,7 +68,8 @@
     <div class="title">上传板块</div>
     <div class="inner">
       <div class="tools">
-        <button class="select-files">选择文件或文件夹</button>
+        <button class="select-files">选择文件</button>
+        <button class="select-dirs">选择文件夹</button>
         <button class="all-start">全部开始</button>
         <button class="all-pause">全部暂停</button>
         <button class="all-delete">全部删除</button>
@@ -79,11 +80,12 @@
     </div>
   </div>
   <div class="drive-files">
-    <div class="title" style="display: flex">云盘文件:
+    <div class="title" style="display: flex;justify-content: space-between">云盘文件
       <div class="current-path"></div>
+      <button onclick="location.reload()">刷新</button>
     </div>
     <div class="inner">
-      <div class="drive-files-item">..\</div>
+      <div class="list-item">..\</div>
       <div class="list">
         啥也没有，试着上传些文件吧！
       </div>
@@ -95,23 +97,37 @@
   const currentPath = urlParams.get("path") || "\\";
   let uploadTasks = [];
   const currentPathEl = document.querySelector(".drive-files .current-path");
-  currentPathEl.innerHTML = currentPath;
+  currentPathEl.innerHTML = `当前目录：${currentPath}`;
   const driveFiles = await fetch(`http://localhost:8000/api/list?path=${currentPath}`).then(res => res.json());
 
   const selectFilesBtn = document.querySelector("button.select-files");
+  const selectDirsBtn = document.querySelector("button.select-dirs");
   const driveFilesInner = document.querySelector(".drive-files .inner .list");
   const uploadTaskList = document.querySelector(".upload-panel .inner .upload-task");
 
-
   selectFilesBtn.addEventListener("click", async () => {
+    const handles = await showOpenFilePicker();
+    for (let handle of handles) {
+      uploadTasks.push({
+        name: handle.name,
+        progress: 0,
+        path: `${currentPath}\\${handle.name}`,
+        handle: handle
+      });
+    }
+    renderUploadTask();
+  });
+
+  selectDirsBtn.addEventListener("click", async () => {
     // 处理句柄
     async function _processHandle(dir, handle) {
       if (handle.kind === "file") {
         // 不是文件夹
         return uploadTasks.push({
           name: handle.name,
+          progress: 0,
           path: `${dir}\\${handle.name}`,
-          file: await handle.getFile()
+          handle: handle
         });
       }
       handle.children = [];
@@ -125,14 +141,14 @@
     const handle = await showDirectoryPicker();
     // 处理句柄
     await _processHandle(currentPath, handle);
-    console.log(uploadTasks);
+    renderUploadTask();
   });
 
 
   /**
    * 返回上一级目录
    */
-  document.querySelector(".drive-files>.inner>.drive-files-item").addEventListener("click", function goUpperDir() {
+  document.querySelector(".drive-files>.inner>.list-item").addEventListener("click", () => {
     let currentUrl = new URL(window.location.href);
     const pathArray = currentUrl.searchParams.get("path").split("\\");
     pathArray.pop();
@@ -141,6 +157,19 @@
     window.location.href = currentUrl.href;
   });
 
+
+
+  /**
+   * 渲染上传任务
+   */
+  function renderUploadTask() {
+    let innerContent = "";
+    for (let task of uploadTasks) {
+      innerContent += `<div class="list-item"><div class="left">${task.path} - ${task.progress * 100}%</div><div class="right"><button>开始</button><button>暂停</button><button>删除</button></div></div>`;
+    }
+    uploadTaskList.innerHTML = innerContent;
+  }
+
   /**
    * 根据数据的树形结构生成文件树
    */
@@ -148,10 +177,10 @@
     let innerContent = "";
     for (let item of driveFiles.children) {
       if (item.type === "file") {
-        innerContent += `<div class="drive-files-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件</div></div>`;
+        innerContent += `<div class="list-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件</div></div>`;
       }
       if (item.type === "dir") {
-        innerContent += `<a href="?path=${item.path}"><div class="drive-files-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件夹</div></div></a>`;
+        innerContent += `<a href="?path=${item.path}"><div class="list-item"><div class="left">${item.name}</div><div class="right"><a href="http://localhost:8000/download?filename=${item.path}">下载</a>&nbsp;文件夹</div></div></a>`;
       }
     }
 
