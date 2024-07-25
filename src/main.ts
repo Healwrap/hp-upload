@@ -3,9 +3,9 @@ import SparkMD5 from 'spark-md5'
 export async function createUploadTasks(handles) {
   let uploadTask = []
   for (let handle of handles) {
-    // 判断文件大小是否大于200M，大于使用分片上传
+    // 判断文件大小是否大于20M，大于使用分片上传
     const file = handle.getFile()
-    if (file.size > 1024 * 1024 * 200) {
+    if (file.size > 1024 * 1024 * 20) {
       // 大于200M 使用分片上传
       const splitInfo = await spiltFile(file)
       const task = new MultipartTask({ ...splitInfo, path: handle.path, name: handle.name })
@@ -94,7 +94,10 @@ function spiltFile(file) {
   })
 }
 
-class MultipartTask {
+/**
+ * 大文件分片上传，支持获取上传进度、断点续传等功能
+ */
+export class MultipartTask {
   #paused
   #needs
   #fileInfo
@@ -135,7 +138,7 @@ class MultipartTask {
    * @returns {Promise<any>}
    */
   handShake(fileInfo) {
-    return fetch('http://localhost:8000/api/upload/handshake', {
+    return fetch('http://localhost:8000/api/upload/multipart/handshake', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -176,7 +179,7 @@ class MultipartTask {
     formData.append('chunkId', nextChunkId)
     formData.append('fileId', fileInfo.fileId)
     formData.append('file', file.content)
-    const resp = await fetch('http://localhost:8000/api/upload', {
+    const resp = await fetch('http://localhost:8000/api/upload/multipart', {
       method: 'POST',
       body: formData,
     }).then((resp) => resp.json())
@@ -192,17 +195,19 @@ class MultipartTask {
   }
 }
 
-class SingleTask {
+/**
+ * 小文件秒传
+ */
+export class SingleTask {
   #fileInfo;
 
   constructor(fileInfo) {
     this.#fileInfo = fileInfo;
   }
 
-  handShake() {
-
-  }
-
+  /**
+   * 携带文件信息和文件二进制，直接上传，无法暂停，获取上传进度等等操作
+   */
   async upload() {
 
   }
