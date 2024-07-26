@@ -5,28 +5,12 @@
  */
 const path = require("path");
 const fs = require("fs");
+const fileUtils = require("../utils/fileUtils");
 
 // 相关的路径，不存在的话，会使用函数创建
 const fileInfoDir = path.join(__dirname, "../fileInfo");
 const filesDir = path.join(__dirname, "../files");
 const chunkDir = path.join(__dirname, "../chunks");
-
-/**
- * 创建所需的文件夹
- */
-function createDir() {
-  function _createDir(path) {
-    if (!fs.existsSync(path)) {
-      fs.mkdirSync(path);
-    }
-  }
-
-  _createDir(fileInfoDir);
-  _createDir(filesDir);
-  _createDir(chunkDir);
-}
-
-createDir();
 
 /**
  * 获取上传的文件信息
@@ -43,14 +27,14 @@ async function getFileInfo(id) {
 /**
  * 写入上传的文件信息
  */
-function writeFileInfo(id, filename, ext, path, chunkIds, needs = chunkIds) {
+function writeFileInfo(id, filename, ext, filepath, chunkIds, needs = chunkIds) {
   return fs.promises.writeFile(
     path.join(fileInfoDir, `${id}.json`),
     JSON.stringify({
       id,
       filename,
       ext,
-      path,
+      filepath,
       chunkIds,
       needs
     })
@@ -80,7 +64,7 @@ async function addChunkToFileInfo(chunkId, fileId) {
     fileId,
     fileInfo.filename,
     fileInfo.ext,
-    fileInfo.path,
+    fileInfo.filepath,
     fileInfo.chunkIds,
     fileInfo.needs
   );
@@ -92,7 +76,8 @@ async function addChunkToFileInfo(chunkId, fileId) {
  */
 async function combine(fileInfo) {
   // 1. 将该文件的所有分片合并
-  const target = path.join(filesDir, fileInfo.path, fileInfo.filename);
+  const target = path.join(filesDir, fileInfo.filepath, fileInfo.filename);
+  fileUtils.mkdirGuard(path.dirname(target));
 
   async function _moveChunk(chunkId) {
     const chunkPath = path.join(chunkDir, chunkId);
@@ -106,7 +91,7 @@ async function combine(fileInfo) {
   }
 
   // 删除文件信息
-  await fs.promises.rm(path.join(fileInfoDir, fileInfo.id));
+  await fs.promises.rm(path.join(fileInfoDir, `${fileInfo.id}.json`));
 }
 
 /**
@@ -115,13 +100,17 @@ async function combine(fileInfo) {
  * true: 有此文件，无须重新上传
  * object：没有此文件，但有该文件的信息
  */
-exports.getFileInfo = async function(id, filename, path) {
-  const absPath = path.join(filesDir, path, filename);
+exports.getFileInfo = async function(id, filename, filepath) {
+  const absPath = path.join(filesDir, filepath, filename);
   if (fs.existsSync(absPath)) {
     return true;
   }
   return await getFileInfo(id);
 };
+/**
+ * 写入文件信息
+ */
+exports.writeFileInfo = writeFileInfo;
 /**
  * 处理分片
  */

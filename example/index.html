@@ -93,9 +93,11 @@
   </div>
 </div>
 <script type="module">
+  import { setUploadConfig, createUploadTasks, MultipartTask, SingleTask } from "../build/index.js";
+
   const urlParams = new URLSearchParams(window.location.search);
   const currentPath = urlParams.get("path") || "\\";
-  let uploadTasks = [];
+  let uploadHandles = [];
   const currentPathEl = document.querySelector(".drive-files .current-path");
   currentPathEl.innerHTML = `当前目录：${currentPath}`;
   const driveFiles = await fetch(`http://localhost:8000/api/list?path=${currentPath}`).then(res => res.json());
@@ -105,30 +107,56 @@
   const driveFilesInner = document.querySelector(".drive-files .inner .list");
   const uploadTaskList = document.querySelector(".upload-panel .inner .upload-task");
 
+  /// 设置上传配置
+  // setUploadConfig({
+  //   multipart: {
+  //     handleShake: "http://localhost:8001/api/upload/multipart/handshake",
+  //     upload: "http://localhost:8001/api/upload/multipart"
+  //   },
+  //   single: {
+  //     upload: "http://localhost:8001/api/upload/single"
+  //   }
+  // });
+
+  /**
+   * 选择单个文件
+   */
   selectFilesBtn.addEventListener("click", async () => {
     const handles = await showOpenFilePicker();
     for (let handle of handles) {
-      uploadTasks.push({
-        name: handle.name,
-        progress: 0,
-        path: `${currentPath}\\${handle.name}`,
-        handle: handle
-      });
+      handle.path = `${currentPath}`;
+      uploadHandles.push(handle);
     }
-    renderUploadTask();
+    // 目前无法实现操作任务 TODO
+    // renderUploadTask();
+    const uploadTasks = await createUploadTasks(uploadHandles);
+    console.log(uploadHandles);
+    // 如果是分片上传
+    if (uploadTasks[0] instanceof MultipartTask) {
+      await uploadTasks[0].start((progress) => {
+          // console.log(progress);
+        }, () => {
+        }
+      );
+      console.log(uploadTasks[0].fileInfo.name + "上传完成");
+    }
+    // 如果是小文件秒传
+    if (uploadTasks[0] instanceof SingleTask) {
+      await uploadTasks[0].start();
+      console.log(uploadTasks[0].fileInfo.name + "上传完成");
+    }
   });
 
+  /**
+   * 选择文件夹
+   */
   selectDirsBtn.addEventListener("click", async () => {
     // 处理句柄
     async function _processHandle(dir, handle) {
       if (handle.kind === "file") {
         // 不是文件夹
-        return uploadTasks.push({
-          name: handle.name,
-          progress: 0,
-          path: `${dir}\\${handle.name}`,
-          handle: handle
-        });
+        handle.path = `${dir}`;
+        return uploadHandles.push(handle);
       }
       handle.children = [];
       const iter = await handle.entries();
@@ -141,7 +169,25 @@
     const handle = await showDirectoryPicker();
     // 处理句柄
     await _processHandle(currentPath, handle);
-    renderUploadTask();
+    // 目前无法实现操作任务 TODO
+    // renderUploadTask();
+    const uploadTasks = await createUploadTasks(uploadHandles);
+    for (let task of uploadTasks) {
+      // 如果是分片上传
+      if (task instanceof MultipartTask) {
+        await task.start((progress) => {
+            // console.log(progress);
+          }, () => {
+          }
+        );
+        console.log(task.fileInfo.name + "上传完成");
+      }
+      // 如果是小文件秒传
+      if (task instanceof SingleTask) {
+        await task.start();
+        console.log(task.fileInfo.name + "上传完成");
+      }
+    }
   });
 
 
@@ -158,14 +204,13 @@
   });
 
 
-
   /**
    * 渲染上传任务
    */
-  function renderUploadTask() {
+  function renderUploadTask(uploadTasks) {
     let innerContent = "";
     for (let task of uploadTasks) {
-      innerContent += `<div class="list-item"><div class="left">${task.path} - ${task.progress * 100}%</div><div class="right"><button>开始</button><button>暂停</button><button>删除</button></div></div>`;
+      innerContent += `<div class="list-item"><div class="left">${task.name} - ${task.path} - ${task.progress * 100}%</div><div class="right"><button>开始</button><button>暂停</button><button>删除</button></div></div>`;
     }
     uploadTaskList.innerHTML = innerContent;
   }
@@ -192,70 +237,4 @@
 
 </script>
 </body>
-
-<!--<body>-->
-<!--<span class="status">状态：-->
-<!--    <span class="inner"></span>-->
-<!--</span><br>-->
-<!--<input type="file"/>-->
-<!--<button class="upload-btn">上传文件</button>-->
-<!--<button class="pause-btn">暂停上传</button>-->
-<!--<script type="module">-->
-<!--  import BreakpointUpload from "../build/index.js";-->
-
-<!--  const status = document.querySelector('.status .inner')-->
-<!--  const fileInput = document.querySelector('input[type="file"]')-->
-<!--  const uploadBtn = document.querySelector('button.upload-btn')-->
-<!--  const pauseBtn = document.querySelector('button.pause-btn')-->
-<!--  let breakpointUpload-->
-<!--  let piecesUpload-->
-<!--  let cutFileInfo-->
-<!--  fileInput.onchange = function (e) {-->
-<!--    status.innerHTML = '已选择文件'-->
-<!--    const file = e.target.files[0]-->
-<!--    breakpointUpload = new BreakpointUpload(file)-->
-<!--    breakpointUpload.spilt().then((res) => {-->
-<!--      cutFileInfo = res-->
-<!--      status.innerHTML = `文件已处理, 耗时${res.time}ms`-->
-<!--    })-->
-<!--  }-->
-<!--  uploadBtn.onclick = async function () {-->
-<!--    if (!cutFileInfo) {-->
-<!--      alert('请先选择文件或等待文件处理')-->
-<!--      return-->
-<!--    }-->
-<!--    status.innerHTML = '开始检查文件进度'-->
-<!--    const resp = await breakpointUpload.handShake(cutFileInfo)-->
-<!--    if (typeof resp.data === 'string') {-->
-<!--      status.innerHTML = `文件已上传, 链接：${resp.data}`-->
-<!--      return-->
-<!--    }-->
-<!--    // await 可以将异步的代码当作同步代码来执行, 所以这里实现了sleep的效果-->
-<!--    await new Promise(resolve => setTimeout(resolve, 1000))-->
-<!--    const progress = 1 - (resp.data.length / cutFileInfo.chunks.length)-->
-<!--    status.innerHTML = `${progress === 0 ? '文件未上传' : `已上传${(progress * 100).toFixed(2)}%`}`-->
-<!--    piecesUpload = breakpointUpload.upload(-->
-<!--      resp.data,-->
-<!--      cutFileInfo,-->
-<!--      (progress) => {-->
-<!--        status.innerHTML = `上传进度：${progress.toFixed(2)}%`-->
-<!--      }, () => {-->
-<!--        status.innerHTML = '上传文件成功'-->
-<!--      }-->
-<!--    )-->
-<!--    piecesUpload.start()-->
-<!--  }-->
-
-<!--  pauseBtn.onclick = function () {-->
-<!--    if (!piecesUpload.getState()) {-->
-<!--      piecesUpload.pause()-->
-<!--      pauseBtn.innerHTML = '继续上传'-->
-<!--    } else {-->
-<!--      piecesUpload.start()-->
-<!--      pauseBtn.innerHTML = '暂停上传'-->
-<!--    }-->
-<!--  }-->
-
-<!--</script>-->
-<!--</body>-->
 </html>

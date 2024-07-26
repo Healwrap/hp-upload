@@ -1,29 +1,56 @@
 import SparkMD5 from 'spark-md5'
 
+/**
+ * 上传链接管理
+ */
+export let uploadConfig = {
+  multipart: {
+    handleShake: 'http://localhost:8000/api/upload/multipart/handshake',
+    upload: 'http://localhost:8000/api/upload/multipart',
+  },
+  single: {
+    upload: 'http://localhost:8000/api/upload/single',
+  },
+}
+
+/**
+ * 设置上传配置
+ * @param config
+ */
+export function setUploadConfig(config) {
+  uploadConfig = config
+}
+
+/**
+ * 创建上传任务
+ * @param handles
+ * @return uploadTask 返回任务列表
+ */
 export async function createUploadTasks(handles) {
   let uploadTask = []
   for (let handle of handles) {
     // 判断文件大小是否大于20M，大于使用分片上传
-    const file = handle.getFile()
+    const file = await handle.getFile()
     if (file.size > 1024 * 1024 * 20) {
-      // 大于200M 使用分片上传
+      // 大于20M 使用分片上传
       const splitInfo = await spiltFile(file)
       const task = new MultipartTask({ ...splitInfo, path: handle.path, name: handle.name })
       uploadTask.push(task)
     } else {
-      // 小于200M 使用单文件上传
-      const file = handle.file
+      // 小于20M 使用单文件上传
+      const file = await handle.getFile()
       const fileInfo = {
         fileId: SparkMD5.ArrayBuffer.hash(file),
         ext: getExtName(file.name),
         path: handle.path,
         name: handle.name,
-        file: handle.getFile(),
+        file: file,
       }
       const task = new SingleTask(fileInfo)
       uploadTask.push(task)
     }
   }
+  return uploadTask
 }
 
 /**
@@ -100,11 +127,11 @@ function spiltFile(file) {
 export class MultipartTask {
   #paused
   #needs
-  #fileInfo
+  fileInfo
 
   constructor(fileInfo) {
     this.#paused = true
-    this.#fileInfo = fileInfo
+    this.fileInfo = fileInfo
   }
 
   /**
@@ -119,9 +146,13 @@ export class MultipartTask {
    * @param updateFn
    * @param callback
    */
-  start(updateFn, callback) {
-    this.#paused = false
-    this.#upload(this.#fileInfo, this.#needs, updateFn, callback)
+  async start(updateFn, callback) {
+    // 这里第一次启动上传，会握手，暂停恢复之后也会握手检查上传进度
+    if (this.#paused) {
+      this.#paused = false
+      await this.handShake()
+    }
+    await this.#upload(updateFn, callback)
   }
 
   /**
@@ -134,64 +165,63 @@ export class MultipartTask {
 
   /**
    * 与后端握手，获取文件上传进度
-   * @param fileInfo
    * @returns {Promise<any>}
    */
-  handShake(fileInfo) {
-    return fetch('http://localhost:8000/api/upload/multipart/handshake', {
+  async handShake() {
+    const chunkIds = this.fileInfo.chunks.map((it) => it.id)
+    const res = await fetch(uploadConfig.multipart.handleShake, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        fileId: fileInfo.fileId,
-        ext: fileInfo.ext,
-        chunkIds: fileInfo.chunks.map((it) => it.id),
+        fileId: this.fileInfo.fileId,
+        name: this.fileInfo.name,
+        path: this.fileInfo.path,
+        ext: this.fileInfo.ext,
+        chunkIds: chunkIds,
       }),
     }).then((resp) => resp.json())
+    if (res.data) {
+      this.#needs = res.data
+    }
+    this.#needs = chunkIds
   }
 
   /**
-   * 上传文件
-   * @param fileInfo {{fileId: string,ext: string,chunks:Blob[],time: number}}
-   * @param needs
+   * 上传文件的实现
    * @param updateFn
    * @param callback
    * @returns {Promise<void>}
    */
-  async #upload(fileInfo, needs, updateFn = (progress) => null, callback = () => null) {
-    console.log(`请求前：${needs}`)
-    // debugger
+  async #upload(updateFn = (progress) => null, callback = () => null) {
     // 如果没有传入 needs 或者 paused 直接停止
-    if (!needs || this.#paused) {
+    if (!this.#needs || this.#paused) {
       return
     }
     // 如果 needs长度为0 说明已经把所有分片都上传了，调用回调
-    if (needs.length === 0) {
+    if (this.#needs.length === 0) {
       callback()
       return
     }
     // 下一个要上传的 块
-    const nextChunkId = needs[0]
+    const nextChunkId = this.#needs[0]
     // 从chunks中找到这个块
-    const file = fileInfo.chunks.find((it) => it.id === nextChunkId)
+    const file = this.fileInfo.chunks.find((it) => it.id === nextChunkId)
     const formData = new FormData()
     formData.append('chunkId', nextChunkId)
-    formData.append('fileId', fileInfo.fileId)
+    formData.append('fileId', this.fileInfo.fileId)
     formData.append('file', file.content)
-    const resp = await fetch('http://localhost:8000/api/upload/multipart', {
+    const resp = await fetch(uploadConfig.multipart.upload, {
       method: 'POST',
       body: formData,
     }).then((resp) => resp.json())
     // 更新 needs
-    needs = resp.data
-    console.log(`请求后：${needs}`)
-    // await 可以将异步的代码当作同步代码来执行, 所以这里实现了sleep的效果
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    this.#needs = resp.data
     // 更新进度
-    const progress = (1 - needs.length / fileInfo.chunks.length) * 100
+    const progress = (1 - this.#needs.length / this.fileInfo.chunks.length) * 100
     updateFn(progress)
-    await this.#upload(fileInfo, needs, updateFn, callback)
+    await this.#upload(updateFn, callback)
   }
 }
 
@@ -199,16 +229,42 @@ export class MultipartTask {
  * 小文件秒传
  */
 export class SingleTask {
-  #fileInfo;
+  fileInfo
+  #controller
 
   constructor(fileInfo) {
-    this.#fileInfo = fileInfo;
+    this.fileInfo = fileInfo
+    this.#controller = new AbortController()
   }
 
   /**
    * 携带文件信息和文件二进制，直接上传，无法暂停，获取上传进度等等操作
    */
-  async upload() {
+  async start() {
+    await this.#upload()
+  }
 
+  /**
+   * 取消上传（删除任务）
+   */
+  abort() {
+    this.#controller.abort()
+  }
+
+  /**
+   * 上传操作的实现
+   */
+  async #upload() {
+    const formData = new FormData()
+    formData.append('file', this.fileInfo.file)
+    formData.append('ext', this.fileInfo.ext)
+    formData.append('path', this.fileInfo.path)
+    formData.append('name', this.fileInfo.name)
+    formData.append('fileId', this.fileInfo.fileId)
+    await fetch(uploadConfig.single.upload, {
+      method: 'POST',
+      body: formData,
+      signal: this.#controller.signal,
+    }).then((resp) => resp.json())
   }
 }
