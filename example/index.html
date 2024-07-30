@@ -134,7 +134,8 @@
     // 如果是分片上传
     if (uploadTasks[0] instanceof MultipartTask) {
       await uploadTasks[0].start((progress) => {
-          // console.log(progress);
+          console.log(progress);
+          console.log(uploadTasks[0].fileInfo.speed);
         }, () => {
         }
       );
@@ -145,8 +146,8 @@
       await uploadTasks[0].start();
       console.log(uploadTasks[0].fileInfo.name + "上传完成");
     }
-    alert("上传完成")
-    location.reload()
+    alert("上传完成");
+    // location.reload()
   });
 
   /**
@@ -190,8 +191,8 @@
         console.log(task.fileInfo.name + "上传完成");
       }
     }
-    alert("上传完成")
-    location.reload()
+    alert("上传完成");
+    location.reload();
   });
 
 

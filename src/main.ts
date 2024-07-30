@@ -1,4 +1,6 @@
 import SparkMD5 from 'spark-md5'
+import request from './request'
+import { convertNetworkSpeed, getNetworkSpeed } from './utils'
 
 /**
  * 上传链接管理
@@ -82,8 +84,8 @@ function spiltFile(file) {
     }
 
     const currentTime = new Date().getTime()
-    // 分片尺寸（2M）
-    const chunkSize = 1024 * 1024 * 2
+    // 分片尺寸（5M）
+    const chunkSize = 1024 * 1024 * 5
     // 分片数量
     const chunkCount = Math.ceil(file.size / chunkSize)
     // 当前chunk的下标
@@ -194,7 +196,7 @@ export class MultipartTask {
    * @param callback
    * @returns {Promise<void>}
    */
-  async #upload(updateFn = (progress) => null, callback = () => null) {
+  async #upload(updateFn = (speed, progress) => null, callback = () => null) {
     // 如果没有传入 needs 或者 paused 直接停止
     if (!this.#needs || this.#paused) {
       return
@@ -212,15 +214,25 @@ export class MultipartTask {
     formData.append('chunkId', nextChunkId)
     formData.append('fileId', this.fileInfo.fileId)
     formData.append('file', file.content)
-    const resp = await fetch(uploadConfig.multipart.upload, {
+    const uploadState = {
+      lastTimestamp: Date.now(),
+      lastLoaded: 0,
+    }
+    const resp = await request<any>({
+      url: uploadConfig.multipart.upload,
       method: 'POST',
-      body: formData,
-    }).then((resp) => resp.json())
+      data: formData,
+      onUploadProgress: (loaded, total) => {
+        // 计算进度（根据已上传的块加当前块的上传进度）
+        const needsChunks = this.#needs.length
+        const chunks = this.fileInfo.chunks.length
+        const progress = (1 - needsChunks / chunks + loaded / total / chunks) * 100
+        // 执行更新回调
+        updateFn && updateFn(getNetworkSpeed(uploadState, loaded), progress)
+      },
+    }).then((resp) => JSON.parse(resp))
     // 更新 needs
     this.#needs = resp.data
-    // 更新进度
-    const progress = (1 - this.#needs.length / this.fileInfo.chunks.length) * 100
-    updateFn(progress)
     await this.#upload(updateFn, callback)
   }
 }
@@ -230,11 +242,9 @@ export class MultipartTask {
  */
 export class SingleTask {
   fileInfo
-  #controller
 
   constructor(fileInfo) {
     this.fileInfo = fileInfo
-    this.#controller = new AbortController()
   }
 
   /**
@@ -245,26 +255,27 @@ export class SingleTask {
   }
 
   /**
-   * 取消上传（删除任务）
-   */
-  abort() {
-    this.#controller.abort()
-  }
-
-  /**
    * 上传操作的实现
    */
-  async #upload() {
+  async #upload(updateFn = (speed, progress) => null) {
     const formData = new FormData()
     formData.append('file', this.fileInfo.file)
     formData.append('ext', this.fileInfo.ext)
     formData.append('path', this.fileInfo.path)
     formData.append('name', this.fileInfo.name)
     formData.append('fileId', this.fileInfo.fileId)
-    await fetch(uploadConfig.single.upload, {
+    const uploadState = {
+      lastTimestamp: Date.now(),
+      lastLoaded: 0,
+    }
+    return await request<any>({
+      url: uploadConfig.single.upload,
       method: 'POST',
-      body: formData,
-      signal: this.#controller.signal,
-    }).then((resp) => resp.json())
+      data: formData,
+      onUploadProgress: (loaded, total) => {
+        // 执行更新回调
+        updateFn && updateFn(getNetworkSpeed(uploadState, loaded), loaded / total)
+      },
+    }).then((resp) => JSON.parse(resp))
   }
 }

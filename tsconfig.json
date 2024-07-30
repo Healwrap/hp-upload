@@ -13,8 +13,13 @@
     "importHelpers": false,
     "strictNullChecks": false,
     "allowUnreachableCode": true,
-    "lib": ["es6", "dom"],
-    "typeRoots": ["./node_modules/@types"],
+    "lib": [
+      "es6",
+      "dom"
+    ],
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
     "outDir": "./build",
     // 重定向输出目录
     "rootDir": "./src"
@@ -28,5 +33,8 @@
   "esModuleInterop": true,
   "allowSyntheticDefaultImports": true,
   "compileOnSave": false,
-  "buildOnSave": false
+  "buildOnSave": false,
+  "ts-node": {
+    "esm": true
+  }
 }
