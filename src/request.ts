@@ -16,8 +16,6 @@ export default function request<T>(options: RequestOptions) {
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(method, url);
-    // 默认即开启跨域
-    // xhr.withCredentials = true;
     // 设置请求头
     if (headers) {
       Object.entries(headers).forEach(([key, value]) => {

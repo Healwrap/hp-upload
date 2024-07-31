@@ -19,7 +19,7 @@ const config = [
         tsconfig: './tsconfig.json',
       }),
       nodeResolve(), commonjs(),
-      // terser(),
+      terser(),
       babel({
         babelHelpers: 'bundled',
         extensions: ['.js','.ts'],

@@ -16,6 +16,20 @@ export let uploadConfig = {
 }
 
 /**
+ * 创建上传队列 用于控制并发
+ * @param tasks 任务总队列
+ * @param maxConcurrency 最大并发数
+ * @param updateFn 上传进度回调函数
+ * @param callback 上传完成回调函数
+ */
+export function createUploadQueue(tasks, maxConcurrency = 5, updateFn, callback) {
+  return new Promise((resolve, reject) => {
+    const dealTasks = []
+
+  })
+}
+
+/**
  * 设置上传配置
  * @param config
  */
@@ -171,19 +185,20 @@ export class MultipartTask {
    */
   async handShake() {
     const chunkIds = this.fileInfo.chunks.map((it) => it.id)
-    const res = await fetch(uploadConfig.multipart.handleShake, {
-      method: 'POST',
+    const res = await request<any>({
+      url: uploadConfig.multipart.handleShake,
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
+      method: 'POST',
+      data: JSON.stringify({
         fileId: this.fileInfo.fileId,
         name: this.fileInfo.name,
         path: this.fileInfo.path,
         ext: this.fileInfo.ext,
         chunkIds: chunkIds,
       }),
-    }).then((resp) => resp.json())
+    }).then((resp) => JSON.parse(resp))
     if (res.data) {
       this.#needs = res.data
     }
@@ -203,7 +218,7 @@ export class MultipartTask {
     }
     // 如果 needs长度为0 说明已经把所有分片都上传了，调用回调
     if (this.#needs.length === 0) {
-      callback()
+      callback && callback()
       return
     }
     // 下一个要上传的 块
@@ -227,8 +242,11 @@ export class MultipartTask {
         const needsChunks = this.#needs.length
         const chunks = this.fileInfo.chunks.length
         const progress = (1 - needsChunks / chunks + loaded / total / chunks) * 100
+        const speed = getNetworkSpeed(uploadState, loaded)
+        this.fileInfo.speed = speed
+        this.fileInfo.progress = progress
         // 执行更新回调
-        updateFn && updateFn(getNetworkSpeed(uploadState, loaded), progress)
+        updateFn && updateFn(speed, progress)
       },
     }).then((resp) => JSON.parse(resp))
     // 更新 needs
@@ -250,14 +268,14 @@ export class SingleTask {
   /**
    * 携带文件信息和文件二进制，直接上传，无法暂停，获取上传进度等等操作
    */
-  async start() {
-    await this.#upload()
+  async start(updateFn, callback) {
+    await this.#upload(updateFn, callback)
   }
 
   /**
    * 上传操作的实现
    */
-  async #upload(updateFn = (speed, progress) => null) {
+  async #upload(updateFn = (speed, progress) => null, callback = () => null) {
     const formData = new FormData()
     formData.append('file', this.fileInfo.file)
     formData.append('ext', this.fileInfo.ext)
@@ -274,8 +292,16 @@ export class SingleTask {
       data: formData,
       onUploadProgress: (loaded, total) => {
         // 执行更新回调
-        updateFn && updateFn(getNetworkSpeed(uploadState, loaded), loaded / total)
+        const progress = loaded / total
+        const speed = getNetworkSpeed(uploadState, loaded)
+        this.fileInfo.speed = speed
+        this.fileInfo.progress = progress
+        updateFn && updateFn(speed, progress)
       },
-    }).then((resp) => JSON.parse(resp))
+    }).then((resp) => {
+      // 执行回调
+      callback && callback()
+      return JSON.parse(resp)
+    })
   }
 }

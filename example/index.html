@@ -107,7 +107,7 @@
   const driveFilesInner = document.querySelector(".drive-files .inner .list");
   const uploadTaskList = document.querySelector(".upload-panel .inner .upload-task");
 
-  /// 设置上传配置
+  /// 设置上传配置 TODO
   // setUploadConfig({
   //   multipart: {
   //     handleShake: "http://localhost:8001/api/upload/multipart/handshake",
@@ -133,9 +133,9 @@
     console.log(uploadHandles);
     // 如果是分片上传
     if (uploadTasks[0] instanceof MultipartTask) {
-      await uploadTasks[0].start((progress) => {
-          console.log(progress);
-          console.log(uploadTasks[0].fileInfo.speed);
+      await uploadTasks[0].start((speed, progress) => {
+          // 单个任务的上传速度和进度
+          // console.log(speed, progress);
         }, () => {
         }
       );
