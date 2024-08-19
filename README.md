@@ -72,6 +72,8 @@ https://github.com/Healwrap/hp-rollup-ts-plugin-template
 - 对于系统来讲，如存储常见资源的话，可节省大量存储空间，同时，这个设计对于保存其他用户的分享文件也是很方便的，因为不需要对文件进行操作，而是更新数据库记录即可
 
 ![](https://picgo-img-repo.oss-cn-beijing.aliyuncs.com/img/08877bffdbb42fc4702792da998d2822.png)
+
+
 ## 3.大文件分片上传
 
 整体来说，实现断点上传的主要思路就是把要上传的文件切分为多个小的数据块然后进行上传
